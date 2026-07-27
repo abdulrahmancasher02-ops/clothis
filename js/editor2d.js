@@ -198,6 +198,53 @@ export function updateActiveTextStyle({ text, color, fontFamily, fontSize }) {
   onChangeCb();
 }
 
+export function toggleBold() {
+  const canvas = sides[currentSide].canvas;
+  const obj = canvas.getActiveObject();
+  if (!obj || obj.type !== 'textbox') return;
+  obj.set('fontWeight', obj.fontWeight === 'bold' ? 'normal' : 'bold');
+  canvas.requestRenderAll();
+  onChangeCb();
+}
+
+export function toggleItalic() {
+  const canvas = sides[currentSide].canvas;
+  const obj = canvas.getActiveObject();
+  if (!obj || obj.type !== 'textbox') return;
+  obj.set('fontStyle', obj.fontStyle === 'italic' ? 'normal' : 'italic');
+  canvas.requestRenderAll();
+  onChangeCb();
+}
+
+export function setOpacity(value) {
+  const canvas = sides[currentSide].canvas;
+  const obj = canvas.getActiveObject();
+  if (!obj) return;
+  obj.set('opacity', Number(value));
+  canvas.requestRenderAll();
+  onChangeCb();
+}
+
+export function bringForward() {
+  const canvas = sides[currentSide].canvas;
+  const obj = canvas.getActiveObject();
+  if (!obj) return;
+  canvas.bringForward(obj);
+  canvas.requestRenderAll();
+  renderLayerList();
+  onChangeCb();
+}
+
+export function sendBackward() {
+  const canvas = sides[currentSide].canvas;
+  const obj = canvas.getActiveObject();
+  if (!obj) return;
+  canvas.sendBackwards(obj);
+  canvas.requestRenderAll();
+  renderLayerList();
+  onChangeCb();
+}
+
 export function getActiveObject() {
   return sides[currentSide].canvas.getActiveObject();
 }
