@@ -18,17 +18,24 @@ python3 -m http.server 8080
 # then open http://localhost:8080
 ```
 
-## Deploy to GitHub Pages
+## Deploy to GitHub Pages (via GitHub Actions)
 
-1. Create a new GitHub repo and push the contents of this folder to it
-   (`index.html` should sit at the repo root, or at the root of the
-   folder you point Pages at).
-2. In the repo: **Settings → Pages → Source** → choose the branch
-   (usually `main`) and folder (`/root`).
-3. Wait a minute, then visit `https://<your-username>.github.io/<repo-name>/`.
+This repo includes `.github/workflows/deploy.yml`, so it deploys itself —
+no build step is needed since it's plain HTML/CSS/JS, the workflow just
+publishes the folder.
 
-That's it — everything (Fabric.js, Three.js) loads from a CDN over
-HTTPS, so there's nothing else to configure.
+1. Create a new GitHub repo and push the contents of this folder to it,
+   with `index.html` at the repo root and `.github/workflows/deploy.yml`
+   included.
+2. In the repo: **Settings → Pages → Build and deployment → Source** →
+   choose **GitHub Actions** (not "Deploy from a branch").
+3. Push to `main` (or run the workflow manually from the **Actions** tab).
+   The included workflow checks out the repo and publishes it with
+   `actions/upload-pages-artifact` + `actions/deploy-pages`.
+4. After the workflow finishes, visit `https://<your-username>.github.io/<repo-name>/`.
+
+Everything else (Fabric.js, Three.js) loads from a CDN over HTTPS, so
+there's nothing to install or build.
 
 ## How it's built
 
@@ -47,7 +54,9 @@ automatically — there's only one shape to maintain per garment.
 
 ## Adding a new garment type manually
 
-Open `js/garments.js` and add an entry to the `GARMENTS` object:
+Two small config edits — nothing else needs to change:
+
+**1. `js/garments.js`** — the 2D flat-lay silhouette and print zone:
 
 ```js
 tanktop2: {
@@ -65,20 +74,41 @@ tanktop2: {
 - `zone` is the rectangle where text/images are allowed to sit (the
   dashed guide box you see on the canvas).
 
-Nothing else needs to change — the garment picker, the 2D canvas, and
-the 3D preview all read from this one config object.
+**2. `js/scene3d.js`** — the 3D shape, in the `GARMENT_3D` config:
+
+```js
+tanktop2: { sleeve: 'short', collar: 'crew', hood: false, pocket: false, placket: false, ribHem: false }
+```
+
+- `sleeve`: `'none'` | `'short'` | `'long'`
+- `collar`: `'crew'` | `'small'`
+- `hood` / `pocket` / `placket` / `ribHem`: `true`/`false` toggles for
+  the optional parts
+
+The garment picker, the 2D canvas, and the 3D preview all read from
+these two config objects automatically.
 
 ## Notes and current limitations
 
-- The 3D preview is a stylized "flat mockup" (two textured faces plus
-  a thin edge), not a fully sculpted, seamed 3D garment. It's built to
-  give an accurate, fast, rotatable preview of your artwork on every
-  device without needing large 3D asset files. If you want photoreal
-  sculpted models later, swap `buildGarment()` in `scene3d.js` to load
-  a `.glb` per garment type instead of generating one from the 2D
-  outline.
-- PNG/JPG export downloads the flat mockup of whichever side (front/
-  back) you're currently viewing. The `.glb` export always includes
-  both sides.
-- Everything runs entirely in the browser — no uploads, no accounts,
-  no server-side storage.
+- The 3D preview is built from simple primitives (a tapered cylinder torso,
+  cylinder sleeves, a torus collar, a hood/pocket/placket where relevant) —
+  not a cloth-simulated mesh. This is a deliberate tradeoff: it's fast,
+  dependency-free, and — importantly — always produces a valid, watertight
+  shape. All the proportions live in the `FIT` object at the top of
+  `scene3d.js` if you want a slimmer/boxier fit, longer sleeves, a deeper
+  hood, etc. — nudge the numbers and reload.
+- Garment color is applied directly to the 3D materials; your text/image
+  design is a separate transparent decal layered on the chest/back, sized to
+  match the 2D print zone's proportions.
+- PNG/JPG export downloads the flat mockup of whichever side (front/back)
+  you're currently viewing. The `.glb` export always includes both sides.
+- Everything runs entirely in the browser — no uploads, no accounts, no
+  server-side storage.
+
+## Customization included
+
+- Garment type, base color (presets + custom picker), front/back side
+- Text: content, color, font, size, bold, italic
+- Images: drag, resize, rotate (Fabric.js default handles)
+- Opacity control and forward/backward layer ordering for any selected element
+- Layer list with click-to-select and delete
