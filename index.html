@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Threadwork — Custom Clothing Designer</title>
+<meta name="description" content="Design custom apparel in 2D and 3D, then export your artwork." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ===================== HEADER ===================== -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">TW</span>
+      <span class="brand-name">Threadwork</span>
+    </div>
+
+    <div class="view-toggle" role="tablist" aria-label="Editor view">
+      <button class="view-btn is-active" data-view="2d" role="tab" aria-selected="true">2D Design</button>
+      <button class="view-btn" data-view="3d" role="tab" aria-selected="false">3D Preview</button>
+    </div>
+
+    <button class="menu-toggle" id="menuToggle" aria-label="Toggle tools">☰ Tools</button>
+  </header>
+
+  <div class="workspace">
+
+    <!-- ===================== LEFT TOOLS ===================== -->
+    <aside class="tools" id="toolsPanel">
+
+      <section class="tool-group">
+        <h2 class="tool-title">Garment</h2>
+        <div class="garment-grid" id="garmentGrid"></div>
+      </section>
+
+      <section class="tool-group">
+        <h2 class="tool-title">Color</h2>
+        <div class="swatches" id="swatchGrid"></div>
+        <label class="custom-color">
+          <span>Custom</span>
+          <input type="color" id="customColor" value="#2B2E33" />
+        </label>
+      </section>
+
+      <section class="tool-group">
+        <h2 class="tool-title">Side</h2>
+        <div class="side-toggle">
+          <button class="side-btn is-active" data-side="front">Front</button>
+          <button class="side-btn" data-side="back">Back</button>
+        </div>
+      </section>
+
+      <section class="tool-group">
+        <h2 class="tool-title">Add to Design</h2>
+        <button class="tool-btn" id="addTextBtn">＋ Add Text</button>
+        <label class="tool-btn file-btn">
+          ＋ Add Image
+          <input type="file" id="addImageInput" accept="image/*" hidden />
+        </label>
+
+        <div class="text-controls" id="textControls" hidden>
+          <input type="text" id="textInputValue" placeholder="Edit selected text" />
+          <div class="row">
+            <input type="color" id="textColor" value="#ffffff" title="Text color" />
+            <select id="fontFamily">
+              <option value="Space Grotesk">Space Grotesk</option>
+              <option value="Inter">Inter</option>
+              <option value="Georgia">Georgia</option>
+              <option value="Courier New">Courier New</option>
+              <option value="Impact">Impact</option>
+            </select>
+          </div>
+          <div class="row">
+            <button class="mini-btn" id="boldBtn" title="Bold"><b>B</b></button>
+            <button class="mini-btn" id="italicBtn" title="Italic"><i>I</i></button>
+          </div>
+          <div class="row">
+            <label class="mini-label">Size <input type="range" id="fontSize" min="10" max="90" value="32" /></label>
+          </div>
+        </div>
+      </section>
+
+      <section class="tool-group">
+        <h2 class="tool-title">Layers</h2>
+        <ul class="layer-list" id="layerList"><li class="layer-empty">No elements yet</li></ul>
+        <div class="row">
+          <label class="mini-label">Opacity <input type="range" id="opacitySlider" min="0" max="1" step="0.05" value="1" /></label>
+        </div>
+        <div class="row">
+          <button class="tool-btn" id="bringForwardBtn">⬆ Forward</button>
+          <button class="tool-btn" id="sendBackwardBtn">⬇ Backward</button>
+        </div>
+        <button class="tool-btn danger" id="deleteLayerBtn">Delete Selected</button>
+      </section>
+
+    </aside>
+
+    <!-- ===================== STAGE ===================== -->
+    <main class="stage">
+
+      <div class="stage-2d" id="stage2d">
+        <div class="canvas-card" id="canvasCard">
+          <div class="zone-guide" id="zoneGuide"></div>
+          <canvas id="bgCanvasFront" class="bg-canvas"></canvas>
+          <canvas id="fabricFront"></canvas>
+          <canvas id="bgCanvasBack" class="bg-canvas" hidden></canvas>
+          <canvas id="fabricBack" hidden></canvas>
+        </div>
+        <p class="stage-hint">Drag to move · pinch or drag corner to resize · tap to select</p>
+      </div>
+
+      <div class="stage-3d" id="stage3d" hidden>
+        <div class="canvas-card canvas-card--3d">
+          <canvas id="threeCanvas"></canvas>
+        </div>
+        <div class="view-quick">
+          <button data-cam="front">Front</button>
+          <button data-cam="side">Side</button>
+          <button data-cam="back">Back</button>
+        </div>
+        <p class="stage-hint">Drag to rotate · scroll or pinch to zoom</p>
+      </div>
+
+    </main>
+
+    <!-- ===================== EXPORT PANEL ===================== -->
+    <aside class="export-panel">
+      <section class="tool-group">
+        <h2 class="tool-title">Spec</h2>
+        <div class="spec-ticket">
+          <div class="spec-row"><span>Garment</span><b id="specGarment">T-Shirt</b></div>
+          <div class="spec-row"><span>Color</span><b id="specColor">#2B2E33</b></div>
+          <div class="spec-row"><span>Side</span><b id="specSide">Front</b></div>
+        </div>
+      </section>
+
+      <section class="tool-group">
+        <h2 class="tool-title">Download</h2>
+        <button class="tool-btn primary" id="exportPng">Download PNG (2D)</button>
+        <button class="tool-btn primary" id="exportJpg">Download JPG (2D)</button>
+        <button class="tool-btn primary" id="exportGlb">Download 3D Model (.glb)</button>
+        <p class="export-note">PNG/JPG export the flat mockup of the side you're viewing. The 3D export includes your full design on both sides.</p>
+      </section>
+    </aside>
+
+  </div>
+</div>
+
+<!-- Fabric.js (2D canvas engine) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
