@@ -1,4 +1,4 @@
-import { GARMENTS, VIEW_W, VIEW_H } from './garments.js';
+import { GARMENTS } from './garments.js';
 import * as Editor2D from './editor2d.js';
 import * as Scene3D from './scene3d.js';
 
@@ -6,21 +6,7 @@ const SWATCHES = ['#2B2E33', '#F3F1EC', '#8C1D18', '#274B4A', '#3ED9A0', '#FF5A3
 
 let currentView = '2d';
 
-// Persistent offscreen canvases (silhouette + design baked together) that we
-// keep feeding to the 3D textures — reused every sync so there's no async
-// image loading involved anywhere in the 3D pipeline.
-const TEX_SCALE = 2;
-const frontComposite = document.createElement('canvas');
-frontComposite.width = VIEW_W * TEX_SCALE; frontComposite.height = VIEW_H * TEX_SCALE;
-const backComposite = document.createElement('canvas');
-backComposite.width = VIEW_W * TEX_SCALE; backComposite.height = VIEW_H * TEX_SCALE;
-
-function paintComposite(side, canvasEl) {
-  const ctx = canvasEl.getContext('2d');
-  ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-  ctx.drawImage(Editor2D.getBgCanvasEl(side), 0, 0, canvasEl.width, canvasEl.height);
-  ctx.drawImage(Editor2D.getFabricCanvasEl(side), 0, 0, canvasEl.width, canvasEl.height);
-}
+const GARMENT_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M8 3 3 7l2.5 3L8 8v13h8V8l2.5 2L21 7l-5-4-1.5 1.5a4.2 4.2 0 0 1-5 0L8 3Z"/></svg>';
 
 // ---------------------------------------------------------------- Garment grid
 function buildGarmentGrid() {
@@ -28,7 +14,7 @@ function buildGarmentGrid() {
   Object.entries(GARMENTS).forEach(([key, cfg], i) => {
     const btn = document.createElement('button');
     btn.className = 'garment-btn' + (i === 0 ? ' is-active' : '');
-    btn.textContent = cfg.label;
+    btn.innerHTML = `${GARMENT_ICON}<span>${cfg.label}</span>`;
     btn.dataset.key = key;
     btn.addEventListener('click', () => selectGarment(key));
     grid.appendChild(btn);
@@ -112,6 +98,12 @@ document.getElementById('deleteLayerBtn').addEventListener('click', () => {
   document.getElementById('textControls').hidden = true;
 });
 
+document.getElementById('boldBtn').addEventListener('click', () => Editor2D.toggleBold());
+document.getElementById('italicBtn').addEventListener('click', () => Editor2D.toggleItalic());
+document.getElementById('opacitySlider').addEventListener('input', (e) => Editor2D.setOpacity(e.target.value));
+document.getElementById('bringForwardBtn').addEventListener('click', () => Editor2D.bringForward());
+document.getElementById('sendBackwardBtn').addEventListener('click', () => Editor2D.sendBackward());
+
 // ---------------------------------------------------------------- View toggle (2D / 3D)
 document.querySelectorAll('.view-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -144,10 +136,8 @@ function updateSpec() {
 
 // ---------------------------------------------------------------- Sync 2D design -> 3D decals
 function syncDecals() {
-  paintComposite('front', frontComposite);
-  paintComposite('back', backComposite);
-  Scene3D.setFrontTexture(frontComposite);
-  Scene3D.setBackTexture(backComposite);
+  Scene3D.setFrontTexture(Editor2D.getFabricCanvasEl('front'));
+  Scene3D.setBackTexture(Editor2D.getFabricCanvasEl('back'));
 }
 
 // ---------------------------------------------------------------- Export
