@@ -1,17 +1,63 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
-import { GARMENTS, VIEW_W, VIEW_H, traceThreeShape } from './garments.js';
+import { GARMENTS } from './garments.js';
+
+// ============================================================================
+// PARAMETRIC GARMENT BUILDER
+// ----------------------------------------------------------------------------
+// Each garment is assembled from simple primitives (torso, sleeves, collar,
+// hood, pocket, placket) instead of extruding the flat 2D outline. Extruding
+// the flat outline produced broken/self-intersecting geometry for shapes
+// with sleeves — this version only ever creates simple, valid, watertight
+// primitives, so it can't produce a broken mesh.
+//
+// All the tunable numbers live in FIT below — nudge them if you want a
+// slimmer/boxier fit, longer sleeves, a deeper hood, etc.
+// ============================================================================
+
+const FIT = {
+  torsoHeight: 3.3,
+  shoulderRadius: 1.05,
+  hemRadius: 0.95,
+  torsoFlatten: 0.56,        // front-to-back flatten ratio (oval cross-section)
+  sleeveShortLen: 0.95,
+  sleeveLongLen: 2.5,
+  sleeveTopRadius: 0.34,
+  sleeveEndRadiusShort: 0.30,
+  sleeveEndRadiusLong: 0.20,
+  sleeveAngleShort: 84,      // rotation (deg) — bigger = closer to horizontal
+  sleeveAngleLong: 80,
+  collarRadius: 0.34,
+  collarTube: 0.065,
+  smallCollarRadius: 0.30
+};
+
+const GARMENT_3D = {
+  tshirt:     { sleeve: 'short', collar: 'crew',  hood: false, pocket: false, placket: false, ribHem: false },
+  hoodie:     { sleeve: 'long',  collar: 'small', hood: true,  pocket: true,  placket: false, ribHem: true  },
+  tank:       { sleeve: 'none',  collar: 'small', hood: false, pocket: false, placket: false, ribHem: false },
+  longsleeve: { sleeve: 'long',  collar: 'crew',  hood: false, pocket: false, placket: false, ribHem: false },
+  polo:       { sleeve: 'short', collar: 'crew',  hood: false, pocket: false, placket: true,  ribHem: false }
+};
+
+function shadeHex(hex, pct) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  const clamp = (v) => Math.min(255, Math.max(0, v + Math.round(255 * pct)));
+  const r = clamp(n >> 16), g = clamp((n >> 8) & 0xff), b = clamp(n & 0xff);
+  return (r << 16) | (g << 8) | b;
+}
 
 let renderer, scene, camera, controls;
 let garmentGroup = null;
-let frontMesh, backMesh, sideMesh;
+let bodyMaterial, ribMaterial, buttonMaterial;
+let frontDecal, backDecal;
 let tweenId = null;
 const texByMesh = new WeakMap();
+let fabricGrain = null;
 
-const DEFAULT_DIST = 640;
+const DEFAULT_DIST = 9.5;
 
-// A small tiled grain texture so the fabric reads as cloth, not plastic.
 function makeFabricGrain() {
   const c = document.createElement('canvas');
   c.width = c.height = 96;
@@ -27,10 +73,9 @@ function makeFabricGrain() {
   ctx.putImageData(dots, 0, 0);
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(26, 32);
+  tex.repeat.set(12, 10);
   return tex;
 }
-let fabricGrain = null;
 
 export function initScene3D() {
   const canvas = document.getElementById('threeCanvas');
@@ -47,13 +92,13 @@ export function initScene3D() {
   const hemi = new THREE.HemisphereLight(0xffffff, 0x3a3a3a, 1.15);
   scene.add(hemi);
   const key = new THREE.DirectionalLight(0xffffff, 0.85);
-  key.position.set(220, 260, 380);
+  key.position.set(4, 6, 7);
   scene.add(key);
   const fill = new THREE.DirectionalLight(0xffffff, 0.35);
-  fill.position.set(-260, -80, 220);
+  fill.position.set(-5, -2, 4);
   scene.add(fill);
-  const rim = new THREE.DirectionalLight(0xffffff, 0.25);
-  rim.position.set(0, 100, -400);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.28);
+  rim.position.set(0, 3, -7);
   scene.add(rim);
 
   controls = new OrbitControls(camera, renderer.domElement);
@@ -62,8 +107,8 @@ export function initScene3D() {
   controls.rotateSpeed = 0.8;
   controls.zoomSpeed = 0.8;
   controls.enablePan = false;
-  controls.minDistance = 320;
-  controls.maxDistance = 1100;
+  controls.minDistance = 5;
+  controls.maxDistance = 22;
   controls.minPolarAngle = Math.PI * 0.15;
   controls.maxPolarAngle = Math.PI * 0.85;
   controls.target.set(0, 0, 0);
@@ -96,65 +141,143 @@ function disposeGarment() {
   scene.remove(garmentGroup);
   garmentGroup.traverse(obj => {
     if (obj.geometry) obj.geometry.dispose();
-    if (obj.material) {
-      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-      mats.forEach(m => { if (m.map) m.map.dispose(); m.dispose(); });
-    }
   });
+  [bodyMaterial, ribMaterial, buttonMaterial].forEach(m => m && m.dispose());
+  [frontDecal, backDecal].forEach(m => { if (m && m.material.map) m.material.map.dispose(); if (m) m.material.dispose(); });
   garmentGroup = null;
+}
+
+// A cylinder "limb" that hangs from a pivot at its top end, so rotating the
+// pivot swings it from the shoulder like a real sleeve.
+function makeLimb(radiusTop, radiusBottom, length, angleDeg, material, cuffMaterial) {
+  const pivot = new THREE.Group();
+  const geo = new THREE.CylinderGeometry(radiusTop, radiusBottom, length, 14);
+  geo.translate(0, -length / 2, 0);
+  pivot.add(new THREE.Mesh(geo, material));
+  if (cuffMaterial) {
+    const cuff = new THREE.Mesh(new THREE.TorusGeometry(radiusBottom * 1.22, 0.045, 8, 20), cuffMaterial);
+    cuff.rotation.x = Math.PI / 2;
+    cuff.position.y = -length + 0.03;
+    pivot.add(cuff);
+  }
+  pivot.rotation.z = THREE.MathUtils.degToRad(angleDeg);
+  return pivot;
 }
 
 export function buildGarment(key) {
   disposeGarment();
-  const cfg = GARMENTS[key];
-  const shape = traceThreeShape(THREE, cfg.outline);
-  const geo = new THREE.ShapeGeometry(shape, 8);
-  geo.computeBoundingBox();
-  const bb = geo.boundingBox;
-  const cx = (bb.min.x + bb.max.x) / 2;
-  const cy = (bb.min.y + bb.max.y) / 2;
+  const cfg = GARMENT_3D[key];
+  const group = new THREE.Group();
 
-  // Remap UVs from the shared VIEW_W/VIEW_H design space BEFORE recentering,
-  // so the fabric-canvas texture lines up with the silhouette exactly.
-  const uv = geo.attributes.uv;
-  const pos = geo.attributes.position;
-  for (let i = 0; i < uv.count; i++) {
-    const x = pos.getX(i);
-    const y = pos.getY(i);
-    uv.setXY(i, x / VIEW_W, 1 + y / VIEW_H);
+  bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x2b2e33, roughness: 0.85, roughnessMap: fabricGrain, metalness: 0.02 });
+  ribMaterial = new THREE.MeshStandardMaterial({ color: shadeHex('#2b2e33', -0.18), roughness: 0.9, roughnessMap: fabricGrain, metalness: 0.02 });
+  buttonMaterial = new THREE.MeshStandardMaterial({ color: 0xefebe3, roughness: 0.45, metalness: 0.1 });
+
+  const halfH = FIT.torsoHeight / 2;
+  const frontZ = FIT.shoulderRadius * FIT.torsoFlatten;
+
+  // ---- torso
+  const torso = new THREE.Mesh(
+    new THREE.CylinderGeometry(FIT.shoulderRadius, FIT.hemRadius, FIT.torsoHeight, 24, 1),
+    bodyMaterial
+  );
+  torso.scale.z = FIT.torsoFlatten;
+  group.add(torso);
+
+  // ---- collar
+  const collarR = cfg.collar === 'small' ? FIT.smallCollarRadius : FIT.collarRadius;
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(collarR, FIT.collarTube, 12, 28), bodyMaterial);
+  collar.rotation.x = Math.PI / 2;
+  collar.position.y = halfH - 0.02;
+  group.add(collar);
+
+  // ---- sleeves / straps
+  if (cfg.sleeve !== 'none') {
+    const long = cfg.sleeve === 'long';
+    const len = long ? FIT.sleeveLongLen : FIT.sleeveShortLen;
+    const endR = long ? FIT.sleeveEndRadiusLong : FIT.sleeveEndRadiusShort;
+    const angle = long ? FIT.sleeveAngleLong : FIT.sleeveAngleShort;
+    [-1, 1].forEach((side) => {
+      const limb = makeLimb(FIT.sleeveTopRadius, endR, len, angle * side, bodyMaterial, long ? ribMaterial : null);
+      limb.position.set(side * FIT.shoulderRadius * 0.9, halfH - 0.35, 0);
+      group.add(limb);
+    });
+  } else {
+    [-1, 1].forEach((side) => {
+      const strap = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.55, 0.08), bodyMaterial);
+      strap.position.set(side * FIT.smallCollarRadius * 0.85, halfH + 0.2, 0);
+      group.add(strap);
+    });
   }
-  uv.needsUpdate = true;
-  geo.translate(-cx, -cy, 0);
 
-  const frontMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.86, roughnessMap: fabricGrain, metalness: 0.02, side: THREE.DoubleSide });
-  const backMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.86, roughnessMap: fabricGrain, metalness: 0.02, side: THREE.DoubleSide });
-  const edgeMat = new THREE.MeshStandardMaterial({ color: 0x2b2e33, roughness: 0.9, roughnessMap: fabricGrain });
+  // ---- hood
+  if (cfg.hood) {
+    const hood = new THREE.Mesh(
+      new THREE.SphereGeometry(0.62, 20, 16, 0, Math.PI * 2, 0, Math.PI * 0.58),
+      bodyMaterial
+    );
+    hood.position.set(0, halfH + 0.24, -0.24);
+    hood.rotation.x = -0.28;
+    group.add(hood);
+  }
 
-  frontMesh = new THREE.Mesh(geo, frontMat);
-  frontMesh.position.z = 4;
+  // ---- kangaroo pocket
+  if (cfg.pocket) {
+    const pocket = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.58, 0.12), bodyMaterial);
+    pocket.position.set(0, -halfH * 0.22, frontZ + 0.05);
+    group.add(pocket);
+  }
 
-  backMesh = new THREE.Mesh(geo.clone(), backMat);
-  backMesh.position.z = -4;
-  backMesh.rotation.y = Math.PI;
+  // ---- placket + buttons (polo)
+  if (cfg.placket) {
+    const placket = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.6, 0.05), bodyMaterial);
+    placket.position.set(0, halfH - 0.42, frontZ + 0.04);
+    group.add(placket);
+    for (let i = 0; i < 3; i++) {
+      const btn = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 10), buttonMaterial);
+      btn.position.set(0, halfH - 0.3 - i * 0.2, frontZ + 0.095);
+      group.add(btn);
+    }
+  }
 
-  // Thin edge band for a touch of thickness/depth
-  const extrudeGeo = new THREE.ExtrudeGeometry(shape, { depth: 8, bevelEnabled: false, curveSegments: 8 });
-  extrudeGeo.translate(-cx, -cy, 0);
-  sideMesh = new THREE.Mesh(extrudeGeo, edgeMat);
-  sideMesh.position.z = -4;
+  // ---- ribbed hem
+  if (cfg.ribHem) {
+    const hem = new THREE.Mesh(
+      new THREE.CylinderGeometry(FIT.hemRadius * 1.03, FIT.hemRadius * 1.03, 0.18, 24),
+      ribMaterial
+    );
+    hem.scale.z = FIT.torsoFlatten;
+    hem.position.y = -halfH + 0.09;
+    group.add(hem);
+  }
 
-  garmentGroup = new THREE.Group();
-  garmentGroup.add(sideMesh, frontMesh, backMesh);
+  // ---- design decals (front + back print area, sized to match the 2D zone)
+  const zone = GARMENTS[key].zone;
+  const decalH = 1.15;
+  const decalW = decalH * (zone.w / zone.h);
+  const decalGeo = new THREE.PlaneGeometry(decalW, decalH);
+
+  frontDecal = new THREE.Mesh(decalGeo, new THREE.MeshStandardMaterial({ transparent: true, roughness: 0.9, side: THREE.DoubleSide }));
+  frontDecal.position.set(0, 0.05, frontZ + 0.07);
+  group.add(frontDecal);
+
+  backDecal = new THREE.Mesh(decalGeo.clone(), new THREE.MeshStandardMaterial({ transparent: true, roughness: 0.9, side: THREE.DoubleSide }));
+  backDecal.position.set(0, 0.05, -(frontZ + 0.07));
+  backDecal.rotation.y = Math.PI;
+  group.add(backDecal);
+
+  garmentGroup = group;
   scene.add(garmentGroup);
 }
 
 export function setColor3D(hex) {
-  if (sideMesh) sideMesh.material.color.set(hex);
+  if (bodyMaterial) bodyMaterial.color.setHex(parseInt(hex.replace('#', ''), 16));
+  if (ribMaterial) ribMaterial.color.setHex(shadeHex(hex, -0.18));
 }
 
-// canvasEl is a live <canvas> we keep updating in place, so we create the
-// THREE.CanvasTexture once per mesh and just flag it dirty afterwards —
-// no async image decoding, no flicker, no export-timing race.
+// canvasEl is a live <canvas> (the Fabric.js design layer) we keep updating in
+// place — one CanvasTexture per mesh, refreshed via needsUpdate, so there's
+// no async image decoding and no export-timing race.
 function applyCanvasTexture(mesh, canvasEl) {
   if (!mesh) return;
   let tex = texByMesh.get(mesh);
@@ -171,8 +294,8 @@ function applyCanvasTexture(mesh, canvasEl) {
   }
 }
 
-export function setFrontTexture(canvasEl) { applyCanvasTexture(frontMesh, canvasEl); }
-export function setBackTexture(canvasEl) { applyCanvasTexture(backMesh, canvasEl); }
+export function setFrontTexture(canvasEl) { applyCanvasTexture(frontDecal, canvasEl); }
+export function setBackTexture(canvasEl) { applyCanvasTexture(backDecal, canvasEl); }
 
 export function setQuickView(pos) {
   const dist = camera.position.length() || DEFAULT_DIST;
@@ -190,7 +313,7 @@ export function setQuickView(pos) {
 
   function step(now) {
     const t = Math.min(1, (now - t0) / duration);
-    const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
+    const eased = 1 - Math.pow(1 - t, 3);
     camera.position.lerpVectors(start, end, eased);
     camera.lookAt(0, 0, 0);
     if (t < 1) tweenId = requestAnimationFrame(step);
